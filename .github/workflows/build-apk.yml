@@ -1,7 +1,5 @@
-# 工作流名称：自动构建Android APK（全流程稳定版）
 name: 自动构建Android APK
 
-# 触发条件：代码推送/PR合并到main分支时执行
 on:
   push:
     branches: [ main ]
@@ -11,87 +9,72 @@ on:
 jobs:
   build-apk:
     runs-on: ubuntu-latest
-    timeout-minutes: 60  # 延长超时时间（首次下载NDK较慢）
+    timeout-minutes: 60
     env:
-      # 全局环境变量：统一SDK/NDK路径，避免后续重复定义
       ANDROID_SDK_ROOT: "/home/runner/.buildozer/android/platform/android-sdk"
-      ANDROID_NDK_VERSION: "25b"  # p4a推荐稳定版
+      ANDROID_NDK_VERSION: "25b"
       CMDLINE_VERSION: "9477386"  # 兼容Java 11的cmdline-tools版本
 
     steps:
-      # 步骤1：拉取仓库代码（含子模块，若有）
       - name: 1. 拉取仓库代码
         uses: actions/checkout@v4
         with:
-          submodules: 'recursive'  # 若项目有子模块，确保拉取完整
+          submodules: 'recursive'
 
-      # 步骤2：配置Python 3.10（锁定版本，避免自动升级）
       - name: 2. 安装Python 3.10
         uses: actions/setup-python@v4
         with:
-          python-version: '3.10.18'  # 明确小版本，兼容Buildozer
+          python-version: '3.10.18'
           cache: 'pip'
           cache-dependency-path: |
             **/requirements.txt
             .github/workflows/*.yml
 
-      # 步骤3：安装系统依赖（含证书修复，避免wget镜像报错）
       - name: 3. 安装系统依赖+证书更新
         run: |
           sudo apt-get update -y
-          # 安装核心依赖：Java 11、解压工具、证书工具
           sudo apt-get install -y \
             openjdk-11-jdk \
             unzip \
             wget \
             ca-certificates \
             libssl-dev
-          # 更新系统证书，解决镜像HTTPS下载报错
           sudo update-ca-certificates
-          # 验证Java版本
           java -version
           javac -version
 
-      # 步骤4：安装Buildozer及Python依赖（锁定版本，避免兼容性问题）
-      - name: 4. 安装Buildozer与项目依赖
+      - name: 4. 安装Buildozer与依赖
         run: |
-          python -m pip install --upgrade pip==25.2  # 锁定pip版本
-          # 核心依赖（版本均验证兼容）
+          python -m pip install --upgrade pip==25.2
           pip install \
             buildozer==1.5.0 \
             cython==3.1.3 \
             pillow==11.3.0 \
             pexpect==4.9.0 \
-            sh==1.14.3  # 锁定sh版本，避免Buildozer调用错误
-          # 验证依赖安装
+            sh==1.14.3
           buildozer --version
           cython --version
 
-      # 步骤5：锁定Java 11环境（双重保障，避免环境漂移）
-      - name: 5. 配置Java 11环境
+      - name: 5. 配置Java 11环境（禁用Maven缓存）
         uses: actions/setup-java@v4
         with:
-          java-version: '11.0.28'  # 明确小版本，避免自动选高版
+          java-version: '11.0.28'
           distribution: 'temurin'
-          cache: 'maven'
-          java-package: 'jdk'
+          java-package: 'jdk'  # 仅安装JDK，无需Maven缓存
         env:
           JAVA_HOME: "/usr/lib/jvm/temurin-11-jdk-amd64"
 
-      # 步骤6：配置Android SDK（镜像切换+权限加固）
       - name: 6. 下载并配置Android SDK
         run: |
-          # 6.1 创建SDK目录并赋予全权限
           mkdir -p $ANDROID_SDK_ROOT
           sudo chmod -R 777 $ANDROID_SDK_ROOT
           echo "SDK路径：$ANDROID_SDK_ROOT"
 
-          # 6.2 下载cmdline-tools（多镜像重试，提高成功率）
           CMDLINE_ZIP="commandlinetools-linux-${CMDLINE_VERSION}_latest.zip"
           MIRRORS=(
-            "https://mirrors.ustc.edu.cn/android/repository/"  # 中科大（优先）
-            "https://mirrors.aliyun.com/android/repository/"   # 阿里云（备用1）
-            "https://dl.google.com/android/repository/"        # 官方（备用2）
+            "https://mirrors.ustc.edu.cn/android/repository/"
+            "https://mirrors.aliyun.com/android/repository/"
+            "https://dl.google.com/android/repository/"
           )
           for MIRROR in "${MIRRORS[@]}"; do
             echo "尝试从镜像下载：$MIRROR$CMDLINE_ZIP"
@@ -99,59 +82,46 @@ jobs:
               echo "从$MIRROR下载成功！"
               break
             fi
-            echo "该镜像下载失败，尝试下一个..."
           done
 
-          # 6.3 解压并整理cmdline-tools目录（SDK标准结构）
           unzip -q cmdline-tools.zip -d $ANDROID_SDK_ROOT
           mv $ANDROID_SDK_ROOT/cmdline-tools $ANDROID_SDK_ROOT/cmdline-tools-tmp
           mkdir -p $ANDROID_SDK_ROOT/cmdline-tools/latest
           mv $ANDROID_SDK_ROOT/cmdline-tools-tmp/* $ANDROID_SDK_ROOT/cmdline-tools/latest/
-          rm -rf $ANDROID_SDK_ROOT/cmdline-tools-tmp  # 清理临时目录
+          rm -rf $ANDROID_SDK_ROOT/cmdline-tools-tmp
 
-          # 6.4 配置SDK工具路径+接受许可证
           export PATH="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$PATH"
-          # 自动接受所有许可证（解决手动确认问题）
-          echo "自动接受Android SDK许可证..."
-          yes | sdkmanager --licenses || true  # 忽略非致命错误
+          echo "自动接受许可证..."
+          yes | sdkmanager --licenses || true
 
-          # 6.5 安装必需组件（与Buildozer.spec匹配）
-          echo "安装Build Tools和平台组件..."
+          echo "安装Build Tools组件..."
           sdkmanager \
             "build-tools;31.0.0" \
             "platform-tools" \
             "platforms;android-31" \
-            "tools"  # 保留旧版tools，兼容Buildozer调用
+            "tools"
 
-          # 6.6 验证安装结果（提前暴露问题）
-          echo "=== SDK安装验证 ==="
-          ls -la $ANDROID_SDK_ROOT/build-tools/ || echo "Build Tools目录缺失"
-          ls -la $ANDROID_SDK_ROOT/build-tools/31.0.0/aidl || echo "aidl工具缺失"
-          sdkmanager --list | grep "build-tools;31.0.0" || echo "Build Tools未安装"
+          echo "=== SDK验证 ==="
+          ls -la $ANDROID_SDK_ROOT/build-tools/ || echo "Build Tools缺失"
+          ls -la $ANDROID_SDK_ROOT/build-tools/31.0.0/aidl || echo "aidl缺失"
 
-      # 步骤7：构建APK（NDK用清华镜像，避免官方超时）
-      - name: 7. 构建Android APK（详细日志）
+      - name: 7. 构建APK（详细日志）
         run: |
-          # 配置环境变量（确保Java/SDK路径生效）
           export JAVA_HOME="/usr/lib/jvm/temurin-11-jdk-amd64"
           export PATH="$JAVA_HOME/bin:$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$PATH"
-          # NDK用清华镜像加速下载
           export ANDROID_NDK_URL="https://mirrors.tuna.tsinghua.edu.cn/android/ndk/android-ndk-r${ANDROID_NDK_VERSION}-linux.zip"
           
-          # 执行打包（-v显示详细日志，便于排查）
-          echo "开始构建APK，NDK镜像：$ANDROID_NDK_URL"
+          echo "开始构建APK..."
           buildozer android debug -v
-          # 验证APK是否生成
           ls -la bin/ || echo "bin目录缺失"
           ls -la bin/*.apk || echo "APK未生成"
 
-      # 步骤8：上传APK产物（即使构建失败，也保留日志产物）
-      - name: 8. 上传APK/日志产物
+      - name: 8. 上传产物（含日志）
         uses: actions/upload-artifact@v4
         with:
           name: 屏幕调整工具APK（含日志）
           path: |
             bin/*.apk
-            .buildozer/logs/*.log  # 上传构建日志，便于后续排查
-          retention-days: 14  # 产物保留14天（可按需调整）
-        if: always()  # 即使构建失败，也上传日志
+            .buildozer/logs/*.log
+          retention-days: 14
+        if: always()
