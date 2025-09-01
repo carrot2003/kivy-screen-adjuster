@@ -1,23 +1,31 @@
+# 工作流名称：自动构建Android APK（兼容Java 11版本）
 name: 自动构建Android APK
 
+# 触发条件：代码推送到main分支时自动执行
 on:
   push:
     branches: [ main ]
 
 jobs:
   build-apk:
+    # 运行环境：Ubuntu最新版（Buildozer最佳兼容系统）
     runs-on: ubuntu-latest
 
     steps:
-      - name: 拉取仓库代码
+      # 步骤1：拉取GitHub仓库代码到构建服务器
+      - name: 1. 拉取仓库代码
         uses: actions/checkout@v4
 
-      - name: 安装Python 3.10
+      # 步骤2：配置Python 3.10环境（兼容Kivy 2.3.1和Buildozer 1.5.0）
+      - name: 2. 安装Python 3.10
         uses: actions/setup-python@v4
         with:
           python-version: '3.10'
+          cache: 'pip'  # 缓存pip依赖，加速后续安装
+          cache-dependency-path: ''  # 禁用依赖配置文件强制检查
 
-      - name: 安装系统依赖
+      # 步骤3：安装系统级依赖（Java 11、解压工具等）
+      - name: 3. 安装系统基础依赖
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -26,67 +34,88 @@ jobs:
             zlib1g-dev \
             libncurses5-dev \
             git \
-            wget
+            wget  # 用于下载cmdline-tools
 
-      - name: 安装Buildozer和依赖
+      # 步骤4：安装Buildozer及项目依赖（Cython、Pillow等）
+      - name: 4. 安装Buildozer与Python依赖
         run: |
           python -m pip install --upgrade pip
-          pip install buildozer cython pillow
+          # 核心依赖：Buildozer（打包工具）、Cython（编译必需）、Pillow（图片处理）
+          pip install buildozer==1.5.0 cython==3.1.3 pillow==11.3.0
+          # 补充p4a依赖（避免打包时缺失）
+          pip install appdirs colorama jinja2 sh==1.14.3 build toml packaging setuptools
 
-      - name: 配置Java 11环境（关键）
-        uses: actions/setup-java@v4  # 使用官方Action自动配置Java
+      # 步骤5：强制配置Java 11环境（解决javax.xml.bind缺失问题）
+      - name: 5. 锁定Java 11环境
+        uses: actions/setup-java@v4
         with:
           java-version: '11'
-          distribution: 'temurin'
+          distribution: 'temurin'  # 稳定的OpenJDK发行版
+          cache: 'maven'  # 缓存Maven依赖（加速SDK工具执行）
 
-      - name: 手动配置Android SDK
+      # 步骤6：手动配置Android SDK（兼容Java 11的cmdline-tools+国内镜像）
+      - name: 6. 配置Android SDK（兼容Java 11）
         run: |
-          # 1. 配置SDK路径并创建目录
+          # 6.1 定义SDK路径（与Buildozer预期路径完全一致）
           export ANDROID_SDK_ROOT="/home/runner/.buildozer/android/platform/android-sdk"
+          # 创建目录并赋予全权限（避免安装时权限不足）
           mkdir -p $ANDROID_SDK_ROOT
           sudo chmod -R 777 $ANDROID_SDK_ROOT
-          
-          # 2. 下载可用的cmdline-tools（10406996版本，兼容镜像）
-          CMDLINE_VERSION="10406996"
+
+          # 6.2 下载【兼容Java 11】的cmdline-tools（r9477386版本，最后支持Java 11的稳定版）
+          CMDLINE_VERSION="9477386"
           CMDLINE_ZIP="commandlinetools-linux-${CMDLINE_VERSION}_latest.zip"
-          if ! wget "https://mirrors.tuna.tsinghua.edu.cn/android/repository/$CMDLINE_ZIP" -O cmdline-tools.zip; then
+          # 优先用中科大镜像（避免清华镜像404），失败自动切换官方源
+          if ! wget "https://mirrors.ustc.edu.cn/android/repository/$CMDLINE_ZIP" -O cmdline-tools.zip; then
+            echo "中科大镜像下载失败，尝试Google官方源..."
             wget "https://dl.google.com/android/repository/$CMDLINE_ZIP" -O cmdline-tools.zip
           fi
-          
-          # 3. 解压并整理cmdline-tools目录结构
+
+          # 6.3 解压并整理cmdline-tools目录结构（Android SDK要求的标准结构）
           unzip -q cmdline-tools.zip -d $ANDROID_SDK_ROOT
           mv $ANDROID_SDK_ROOT/cmdline-tools $ANDROID_SDK_ROOT/cmdline-tools-tmp
           mkdir -p $ANDROID_SDK_ROOT/cmdline-tools/latest
           mv $ANDROID_SDK_ROOT/cmdline-tools-tmp/* $ANDROID_SDK_ROOT/cmdline-tools/latest/
-          
-          # 4. 配置SDK工具路径
-          export PATH="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$PATH"
+
+          # 6.4 配置SDK工具路径到环境变量
+          export PATH="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$ANDROID_SDK_ROOT/tools/bin:$PATH"
+
+          # 6.5 自动接受所有Android SDK许可证（无需手动确认）
           yes | sdkmanager --licenses
-          
-          # 5. 安装Build Tools和必要组件
+
+          # 6.6 安装稳定版Build Tools及必需组件（与buildozer.spec版本一致）
           sdkmanager \
-            "build-tools;31.0.0" \
-            "platform-tools" \
-            "platforms;android-31" \
-            "tools"  # 保留旧版tools，兼容Buildozer调用
-          
-          # 6. 验证安装结果
-          echo "Build Tools目录："
+            "build-tools;31.0.0" \  # 稳定版，兼容Kivy
+            "platform-tools" \       # 安卓平台工具（adb等）
+            "platforms;android-31" \ # 对应Build Tools的API版本
+            "tools"                  # 保留旧版tools，兼容Buildozer调用
+
+          # 6.7 验证安装结果（确认关键文件存在）
+          echo "=== 验证SDK安装结果 ==="
+          echo "Build Tools目录内容："
           ls -la $ANDROID_SDK_ROOT/build-tools/
-          echo "aidl路径："
-          ls -la $ANDROID_SDK_ROOT/build-tools/31.0.0/aidl || echo "aidl未找到"
+          echo "aidl工具路径（打包必需）："
+          ls -la $ANDROID_SDK_ROOT/build-tools/31.0.0/aidl || echo "警告：aidl工具未找到！"
 
-      - name: 构建APK（强制使用Java 11）
+      # 步骤7：正式构建APK（强制使用Java 11+国内NDK镜像）
+      - name: 7. 构建Android APK（详细日志模式）
         run: |
+          # 再次锁定环境变量（避免后续步骤环境丢失）
+          export JAVA_HOME="/usr/lib/jvm/temurin-11-jdk-amd64"
+          export PATH="$JAVA_HOME/bin:$PATH"
           export ANDROID_SDK_ROOT="/home/runner/.buildozer/android/platform/android-sdk"
-          export PATH="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$PATH"
-          buildozer android debug -v  # -v参数显示详细日志
-        env:
-          ANDROID_SDK_ROOT: "/home/runner/.buildozer/android/platform/android-sdk"
-          ANDROID_NDK_URL: "https://mirrors.tuna.tsinghua.edu.cn/android/ndk/android-ndk-r25b-linux.zip"  # NDK用清华镜像加速
+          export PATH="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$ANDROID_SDK_ROOT/tools/bin:$PATH"
 
-      - name: 上传APK产物
+          # 用清华镜像加速NDK下载（避免官方源超时）
+          export ANDROID_NDK_URL="https://mirrors.tuna.tsinghua.edu.cn/android/ndk/android-ndk-r25b-linux.zip"
+
+          # 执行打包（-v显示详细日志，方便排查问题）
+          buildozer android debug -v
+
+      # 步骤8：上传生成的APK产物（供下载安装）
+      - name: 8. 上传APK到GitHub（产物）
         uses: actions/upload-artifact@v4
         with:
-          name: 屏幕调整工具APK
-          path: bin/*.apk
+          name: 屏幕调整工具APK  # 下载时显示的压缩包名称
+          path: bin/*.apk        # APK默认生成路径（Buildozer标准输出目录）
+          retention-days: 30     # 产物保留30天（可自定义）
