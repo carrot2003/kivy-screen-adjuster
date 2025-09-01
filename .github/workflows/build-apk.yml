@@ -1,68 +1,66 @@
-# 工作流名称：自动构建Android APK
 name: 自动构建Android APK
 
-# 触发条件：代码推送到main分支时自动执行
 on:
   push:
     branches: [ main ]
 
-# 定义打包任务
 jobs:
   build-apk:
-    runs-on: ubuntu-latest  # 使用Ubuntu环境（Buildozer最佳兼容）
+    runs-on: ubuntu-latest
 
     steps:
-      # 步骤1：拉取仓库代码
-      - name: 1. 拉取仓库代码
+      - name: 拉取仓库代码
         uses: actions/checkout@v4
 
-      # 步骤2：配置Python 3.10环境（兼容Kivy和Buildozer）
-      - name: 2. 安装Python 3.10
+      - name: 安装Python 3.10
         uses: actions/setup-python@v4
         with:
           python-version: '3.10'
-          cache: 'pip'  # 缓存pip依赖加速构建
-          cache-dependency-path: ''  # 禁用依赖配置文件检查
 
-      # 步骤3：安装Buildozer及所有必要依赖（包含Cython）
-      - name: 3. 安装Buildozer与依赖库
+      - name: 安装系统依赖
         run: |
-          python -m pip install --upgrade pip
-          # 安装核心依赖（Cython是Buildozer编译必需的）
-          pip install buildozer cython pillow
-          # 安装Android构建额外系统依赖（OpenJDK、unzip等）
           sudo apt-get update
           sudo apt-get install -y \
             openjdk-11-jdk \
             unzip \
             zlib1g-dev \
-            libncurses5-dev
+            libncurses5-dev \
+            git
 
-      # 步骤4：预配置Android SDK（自动接受许可证+安装稳定版Build Tools）
-      - name: 4. 配置Android SDK（自动接受许可证）
+      - name: 安装Buildozer和依赖
         run: |
-          # 1. 先让Buildozer初始化SDK目录（避免手动创建路径错误）
-          buildozer android debug --dry-run  # 仅初始化，不实际打包
-          
-          # 2. 自动接受所有Android SDK许可证（关键！解决手动确认问题）
-          yes | ~/.buildozer/android/platform/android-sdk/tools/bin/sdkmanager --licenses
-          
-          # 3. 安装稳定版Build Tools（与buildozer.spec中版本一致，避免预览版）
-          ~/.buildozer/android/platform/android-sdk/tools/bin/sdkmanager \
-            --sdk_root=~/.buildozer/android/platform/android-sdk \
-            "build-tools;31.0.0" "platform-tools" "platforms;android-31"
+          python -m pip install --upgrade pip
+          pip install buildozer cython pillow
 
-      # 步骤5：正式构建APK（使用国内镜像加速SDK/NDK下载）
-      - name: 5. 构建Android APK
+      - name: 初始化Buildozer环境
         run: |
+          # 先让Buildozer创建必要的目录结构
+          buildozer android debug --dry-run
+          
+          # 明确设置SDK路径变量
+          export ANDROID_SDK_ROOT=~/.buildozer/android/platform/android-sdk
+          
+          # 确保sdkmanager可执行
+          chmod +x $ANDROID_SDK_ROOT/tools/bin/sdkmanager
+          
+          # 强制接受所有许可证（关键步骤）
+          echo "y" | $ANDROID_SDK_ROOT/tools/bin/sdkmanager --licenses
+          
+          # 手动安装指定版本的Build Tools（使用稳定版31.0.0）
+          echo "y" | $ANDROID_SDK_ROOT/tools/bin/sdkmanager \
+            "build-tools;31.0.0" \
+            "platform-tools" \
+            "platforms;android-31"
+
+      - name: 构建APK
+        run: |
+          export ANDROID_SDK_ROOT=~/.buildozer/android/platform/android-sdk
           buildozer android debug
         env:
-          # 配置国内清华镜像（解决SDK/NDK下载超时）
           ANDROID_SDK_URL: https://mirrors.tuna.tsinghua.edu.cn/android/sdk/
           ANDROID_NDK_URL: https://mirrors.tuna.tsinghua.edu.cn/android/ndk/
 
-      # 步骤6：上传APK产物（供下载）
-      - name: 6. 上传APK到GitHub
+      - name: 上传APK产物
         uses: actions/upload-artifact@v4
         with:
           name: 屏幕调整工具APK
