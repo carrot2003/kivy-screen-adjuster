@@ -39,7 +39,7 @@ jobs:
 
       # 步骤5：将生成的APK上传为“产物”（Artifacts），方便下载
       - name: 5. 上传APK到GitHub
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: 屏幕调整工具APK  # 下载时显示的压缩包名称（可自定义）
           path: bin/*.apk        # APK的生成路径（Buildozer默认在bin目录下）
