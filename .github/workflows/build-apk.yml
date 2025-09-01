@@ -65,10 +65,10 @@ jobs:
         env:
           JAVA_HOME: "/usr/lib/jvm/temurin-11-jdk-amd64"
 
-      - name: 6. 下载并配置Android SDK（修复目录结构+SDK root）
+      - name: 6. 下载并配置Android SDK（修复组件列表）
         run: |
-          # 1. 创建标准SDK目录结构（关键：符合cmdline-tools规范）
-          mkdir -p $ANDROID_SDK_ROOT/cmdline-tools/latest  # 必须是这个路径
+          # 1. 创建标准SDK目录结构
+          mkdir -p $ANDROID_SDK_ROOT/cmdline-tools/latest
           sudo chmod -R 777 $ANDROID_SDK_ROOT
           echo "SDK根路径：$ANDROID_SDK_ROOT"
 
@@ -86,12 +86,11 @@ jobs:
               break
             fi
           done
-          # 解压到cmdline-tools/latest（标准路径）
           unzip -q cmdline-tools.zip -d $ANDROID_SDK_ROOT/cmdline-tools/tmp
           mv $ANDROID_SDK_ROOT/cmdline-tools/tmp/*/* $ANDROID_SDK_ROOT/cmdline-tools/latest/
           rm -rf cmdline-tools.zip $ANDROID_SDK_ROOT/cmdline-tools/tmp
 
-          # 3. 下载JAXB兼容库（Java 11缺失模块）
+          # 3. 下载JAXB兼容库
           JAXB_LIBS_DIR="$ANDROID_SDK_ROOT/cmdline-tools/latest/lib/jaxb"
           mkdir -p $JAXB_LIBS_DIR
           wget --no-check-certificate -O $JAXB_LIBS_DIR/jaxb-api.jar "https://repo1.maven.org/maven2/javax/xml/bind/jaxb-api/2.3.1/jaxb-api-2.3.1.jar"
@@ -100,25 +99,24 @@ jobs:
           echo "JAXB库列表："
           ls -la $JAXB_LIBS_DIR/
 
-          # 4. 配置环境变量（包含标准cmdline-tools路径）
+          # 4. 配置环境变量
           export PATH="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$ANDROID_SDK_ROOT/platform-tools:$PATH"
           export JAVA_HOME="/usr/lib/jvm/temurin-11-jdk-amd64"
 
-          # 5. 准备类路径（SDK jar + JAXB库）
+          # 5. 准备类路径
           SDK_JAR="$ANDROID_SDK_ROOT/cmdline-tools/latest/lib/sdkmanager-classpath.jar"
           JAXB_JARS="$JAXB_LIBS_DIR/jaxb-api.jar:$JAXB_LIBS_DIR/jaxb-core.jar:$JAXB_LIBS_DIR/jaxb-impl.jar"
           FULL_CLASSPATH="$SDK_JAR:$JAXB_JARS"
 
-          # 6. 安装SDK组件（显式指定--sdk_root，解决路径识别问题）
-          echo "安装SDK组件（指定SDK root）..."
+          # 6. 安装SDK组件（移除无效的'tools'包，修复包名错误）
+          echo "安装SDK组件（修正组件列表）..."
           java -cp $FULL_CLASSPATH com.android.sdklib.tool.sdkmanager.SdkManagerCli \
-            --sdk_root=$ANDROID_SDK_ROOT \  # 关键参数：明确SDK根目录
+            --sdk_root=$ANDROID_SDK_ROOT \
             "platform-tools" \
             "build-tools;31.0.0" \
-            "platforms;android-31" \
-            "tools"  # 安装旧版tools，兼容Buildozer
+            "platforms;android-31"  # 移除'tools'包，该包在新版SDK中已被cmdline-tools替代
 
-          # 7. 验证安装结果（确保关键文件存在）
+          # 7. 验证安装结果
           echo "=== SDK安装验证 ==="
           if [ -d "$ANDROID_SDK_ROOT/build-tools/31.0.0" ]; then
             echo "✅ Build Tools 31.0.0 安装成功"
@@ -128,9 +126,15 @@ jobs:
             exit 1
           fi
           if [ -f "$ANDROID_SDK_ROOT/build-tools/31.0.0/aidl" ]; then
-            echo "✅ aidl工具找到：$ANDROID_SDK_ROOT/build-tools/31.0.0/aidl"
+            echo "✅ aidl工具找到"
           else
             echo "❌ aidl工具缺失"
+            exit 1
+          fi
+          if [ -d "$ANDROID_SDK_ROOT/platform-tools" ]; then
+            echo "✅ platform-tools 安装成功"
+          else
+            echo "❌ platform-tools 未安装"
             exit 1
           fi
 
@@ -140,23 +144,9 @@ jobs:
           export PATH="$JAVA_HOME/bin:$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$ANDROID_SDK_ROOT/platform-tools:$PATH"
           export ANDROID_NDK_URL="https://mirrors.tuna.tsinghua.edu.cn/android/ndk/android-ndk-r${ANDROID_NDK_VERSION}-linux.zip"
           
-          # 显式指定SDK/NDK路径，避免Buildozer查找错误
           buildozer android debug --log-level 2 \
             --android-sdk "$ANDROID_SDK_ROOT" \
             --android-ndk "$ANDROID_SDK_ROOT/../android-ndk-r${ANDROID_NDK_VERSION}"
-
-          # 验证APK生成目录
-          echo "=== APK生成验证 ==="
-          if [ -d "bin" ]; then
-            ls -la bin/
-            if [ -n "$(ls -A bin/*.apk 2>/dev/null)" ]; then
-              echo "✅ APK生成成功！"
-            else
-              echo "⚠️ bin目录存在，但未找到APK文件"
-            fi
-          else
-            echo "❌ bin目录缺失"
-          fi
 
       - name: 8. 上传产物（含日志）
         uses: actions/upload-artifact@v4
