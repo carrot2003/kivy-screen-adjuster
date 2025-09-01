@@ -1,7 +1,7 @@
-# 工作流名称：描述这个Action的作用
+# 工作流名称：自动构建Android APK
 name: 自动构建Android APK
 
-# 触发条件：当代码推送到main分支时，自动执行打包
+# 触发条件：代码推送到main分支时自动执行
 on:
   push:
     branches: [ main ]
@@ -9,10 +9,10 @@ on:
 # 定义打包任务
 jobs:
   build-apk:
-    runs-on: ubuntu-latest  # 选择Linux环境（对Buildozer兼容性最好）
+    runs-on: ubuntu-latest  # 使用Ubuntu环境（Buildozer最佳兼容）
 
     steps:
-      # 步骤1：拉取仓库代码到打包服务器
+      # 步骤1：拉取仓库代码
       - name: 1. 拉取仓库代码
         uses: actions/checkout@v4
 
@@ -22,23 +22,41 @@ jobs:
         with:
           python-version: '3.10'
           cache: 'pip'  # 缓存pip依赖加速构建
-          cache-dependency-path: ''  # 禁用“必须有requirements.txt/pyproject.toml”的检查
+          cache-dependency-path: ''  # 禁用依赖配置文件检查
 
-      # 步骤3：安装Buildozer及项目依赖
+      # 步骤3：安装Buildozer及所有必要依赖（包含Cython）
       - name: 3. 安装Buildozer与依赖库
         run: |
           python -m pip install --upgrade pip
-          pip install buildozer  # 安装Buildozer
-          pip install pillow     # 安装图片处理库（处理example.jpg需要）
+          # 安装核心依赖（Cython是Buildozer编译必需的）
+          pip install buildozer cython pillow
+          # 安装Android构建额外依赖
+          sudo apt-get update
+          sudo apt-get install -y \
+            openjdk-11-jdk \
+            zlib1g-dev \
+            libncurses5-dev \
+            libgdbm-dev \
+            libnss3-dev \
+            libssl-dev \
+            libreadline-dev \
+            libffi-dev \
+            wget
 
-      # 步骤4：执行Buildozer打包命令（自动下载SDK/NDK）
+      # 步骤4：构建APK（使用国内镜像加速SDK/NDK下载）
       - name: 4. 构建Android APK
         run: |
           buildozer android debug
+        env:
+          # 配置国内镜像加速（解决下载超时问题）
+          ANDROID_SDK_URL: https://mirrors.tuna.tsinghua.edu.cn/android/sdk/
+          ANDROID_NDK_URL: https://mirrors.tuna.tsinghua.edu.cn/android/ndk/
+          # 强制使用Python 3.10
+          PYTHONPATH: /opt/hostedtoolcache/Python/3.10.13/x64/lib/python3.10/site-packages
 
-      # 步骤5：上传生成的APK（供下载）
+      # 步骤5：上传APK产物（使用最新版上传插件）
       - name: 5. 上传APK到GitHub
-        uses: actions/upload-artifact@v4  # 使用最新版上传插件
+        uses: actions/upload-artifact@v4
         with:
-          name: 屏幕调整工具APK  # 下载时的压缩包名称
-          path: bin/*.apk        # APK默认生成在bin目录下
+          name: 屏幕调整工具APK
+          path: bin/*.apk
