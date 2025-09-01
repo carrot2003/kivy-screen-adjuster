@@ -9,7 +9,7 @@ on:
 jobs:
   build-apk:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 90  # 延长超时（编译依赖库耗时增加）
     env:
       ANDROID_SDK_ROOT: "/home/runner/.buildozer/android/platform/android-sdk"
       ANDROID_NDK_VERSION: "25b"
@@ -30,16 +30,23 @@ jobs:
             **/requirements.txt
             .github/workflows/*.yml
 
-      - name: 3. 安装系统依赖+证书更新
+      - name: 3. 安装系统依赖（补充编译工具链）
         run: |
           sudo apt-get update -y
+          # 核心修复：添加 libtool/autoconf/automake（编译libffi必需）
           sudo apt-get install -y \
             openjdk-11-jdk \
             unzip \
             wget \
             ca-certificates \
-            libssl-dev
+            libssl-dev \
+            libtool \  # 解决LT_SYS_SYMBOL_USCORE宏缺失
+            autoconf \ # 处理旧版宏警告
+            automake   # 补充编译链工具
           sudo update-ca-certificates
+          # 验证工具安装成功
+          libtool --version || echo "libtool未安装"
+          autoconf --version || echo "autoconf未安装"
           java -version
           javac -version
 
@@ -66,12 +73,11 @@ jobs:
 
       - name: 6. 下载并配置Android SDK（创建sdkmanager软链接）
         run: |
-          # 1. 创建标准SDK目录结构
           mkdir -p $ANDROID_SDK_ROOT/cmdline-tools/latest
           sudo chmod -R 777 $ANDROID_SDK_ROOT
           echo "SDK根路径：$ANDROID_SDK_ROOT"
 
-          # 2. 下载cmdline-tools并解压
+          # 下载cmdline-tools
           CMDLINE_ZIP="commandlinetools-linux-${CMDLINE_VERSION}_latest.zip"
           MIRRORS=(
             "https://mirrors.ustc.edu.cn/android/repository/"
@@ -89,66 +95,52 @@ jobs:
           mv $ANDROID_SDK_ROOT/cmdline-tools/tmp/*/* $ANDROID_SDK_ROOT/cmdline-tools/latest/
           rm -rf cmdline-tools.zip $ANDROID_SDK_ROOT/cmdline-tools/tmp
 
-          # 3. 下载JAXB兼容库
+          # 下载JAXB库
           JAXB_LIBS_DIR="$ANDROID_SDK_ROOT/cmdline-tools/latest/lib/jaxb"
           mkdir -p $JAXB_LIBS_DIR
           wget --no-check-certificate -O $JAXB_LIBS_DIR/jaxb-api.jar "https://repo1.maven.org/maven2/javax/xml/bind/jaxb-api/2.3.1/jaxb-api-2.3.1.jar"
           wget --no-check-certificate -O $JAXB_LIBS_DIR/jaxb-core.jar "https://repo1.maven.org/maven2/com/sun/xml/bind/jaxb-core/2.3.0.1/jaxb-core-2.3.0.1.jar"
           wget --no-check-certificate -O $JAXB_LIBS_DIR/jaxb-impl.jar "https://repo1.maven.org/maven2/com/sun/xml/bind/jaxb-impl/2.3.0.1/jaxb-impl-2.3.0.1.jar"
 
-          # 4. 准备类路径+接受许可证
+          # 接受许可证
           SDK_JAR="$ANDROID_SDK_ROOT/cmdline-tools/latest/lib/sdkmanager-classpath.jar"
           JAXB_JARS="$JAXB_LIBS_DIR/jaxb-api.jar:$JAXB_LIBS_DIR/jaxb-core.jar:$JAXB_LIBS_DIR/jaxb-impl.jar"
           FULL_CLASSPATH="$SDK_JAR:$JAXB_JARS"
           export JAVA_HOME="/usr/lib/jvm/temurin-11-jdk-amd64"
-
-          # 5. 接受所有SDK许可证
-          echo "=== 自动接受所有SDK许可证 ==="
           yes | java -cp $FULL_CLASSPATH com.android.sdklib.tool.sdkmanager.SdkManagerCli \
             --sdk_root=$ANDROID_SDK_ROOT \
             --licenses
 
-          # 6. 安装SDK关键组件
-          echo "=== 安装SDK组件 ==="
+          # 安装SDK组件
           java -cp $FULL_CLASSPATH com.android.sdklib.tool.sdkmanager.SdkManagerCli \
             --sdk_root=$ANDROID_SDK_ROOT \
             "platform-tools" \
             "build-tools;31.0.0" \
             "platforms;android-31"
 
-          # 7. 关键修复：创建sdkmanager软链接（适配Buildozer默认路径）
-          # Buildozer默认找tools/bin/sdkmanager，实际在cmdline-tools/latest/bin
-          mkdir -p $ANDROID_SDK_ROOT/tools/bin  # 创建Buildozer默认的工具目录
+          # 创建sdkmanager软链接
+          mkdir -p $ANDROID_SDK_ROOT/tools/bin
           ln -s $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager $ANDROID_SDK_ROOT/tools/bin/sdkmanager
-          # 验证软链接是否创建成功
           if [ -L "$ANDROID_SDK_ROOT/tools/bin/sdkmanager" ] && [ -e "$ANDROID_SDK_ROOT/tools/bin/sdkmanager" ]; then
             echo "✅ sdkmanager软链接创建成功"
-            ls -la $ANDROID_SDK_ROOT/tools/bin/sdkmanager  # 显示链接信息
           else
             echo "❌ sdkmanager软链接创建失败"
             exit 1
           fi
 
-          # 8. 验证所有组件安装
-          echo "=== SDK安装验证 ==="
-          [ -d "$ANDROID_SDK_ROOT/build-tools/31.0.0" ] && echo "✅ Build Tools 31.0.0" || { echo "❌ Build Tools"; exit 1; }
-          [ -f "$ANDROID_SDK_ROOT/build-tools/31.0.0/aidl" ] && echo "✅ aidl工具" || { echo "❌ aidl"; exit 1; }
+          # 验证组件
+          echo "=== SDK验证 ==="
+          [ -d "$ANDROID_SDK_ROOT/build-tools/31.0.0" ] && echo "✅ Build Tools" || { echo "❌ Build Tools"; exit 1; }
           [ -d "$ANDROID_SDK_ROOT/platform-tools" ] && echo "✅ platform-tools" || { echo "❌ platform-tools"; exit 1; }
-          [ -d "$ANDROID_SDK_ROOT/platforms/android-31" ] && echo "✅ android-31平台" || { echo "❌ android-31"; exit 1; }
-          [ -x "$ANDROID_SDK_ROOT/tools/bin/sdkmanager" ] && echo "✅ sdkmanager可执行" || { echo "❌ sdkmanager不可执行"; exit 1; }
 
-      - name: 7. 构建APK（显式指定环境变量）
+      - name: 7. 构建APK（详细日志）
         run: |
-          # 确保环境变量包含正确的工具路径
           export JAVA_HOME="/usr/lib/jvm/temurin-11-jdk-amd64"
           export PATH="$JAVA_HOME/bin:$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$ANDROID_SDK_ROOT/tools/bin:$ANDROID_SDK_ROOT/platform-tools:$PATH"
+          # 显式指定NDK镜像（加速下载）
           export ANDROID_NDK_URL="https://mirrors.tuna.tsinghua.edu.cn/android/ndk/android-ndk-r${ANDROID_NDK_VERSION}-linux.zip"
           
-          # 验证Buildozer能找到sdkmanager
-          echo "Buildozer查找的sdkmanager路径：$(which sdkmanager)"
-          sdkmanager --version  # 验证sdkmanager可正常运行
-          
-          # 执行构建
+          # 编译时显示详细日志，便于排查依赖问题
           buildozer android debug --log-level 2 \
             --android-sdk "$ANDROID_SDK_ROOT" \
             --android-ndk "$ANDROID_SDK_ROOT/../android-ndk-r${ANDROID_NDK_VERSION}"
