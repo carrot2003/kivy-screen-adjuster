@@ -30,32 +30,39 @@ jobs:
           python -m pip install --upgrade pip
           # 安装核心依赖（Cython是Buildozer编译必需的）
           pip install buildozer cython pillow
-          # 安装Android构建额外依赖
+          # 安装Android构建额外系统依赖（OpenJDK、unzip等）
           sudo apt-get update
           sudo apt-get install -y \
             openjdk-11-jdk \
+            unzip \
             zlib1g-dev \
-            libncurses5-dev \
-            libgdbm-dev \
-            libnss3-dev \
-            libssl-dev \
-            libreadline-dev \
-            libffi-dev \
-            wget
+            libncurses5-dev
 
-      # 步骤4：构建APK（使用国内镜像加速SDK/NDK下载）
-      - name: 4. 构建Android APK
+      # 步骤4：预配置Android SDK（自动接受许可证+安装稳定版Build Tools）
+      - name: 4. 配置Android SDK（自动接受许可证）
+        run: |
+          # 1. 先让Buildozer初始化SDK目录（避免手动创建路径错误）
+          buildozer android debug --dry-run  # 仅初始化，不实际打包
+          
+          # 2. 自动接受所有Android SDK许可证（关键！解决手动确认问题）
+          yes | ~/.buildozer/android/platform/android-sdk/tools/bin/sdkmanager --licenses
+          
+          # 3. 安装稳定版Build Tools（与buildozer.spec中版本一致，避免预览版）
+          ~/.buildozer/android/platform/android-sdk/tools/bin/sdkmanager \
+            --sdk_root=~/.buildozer/android/platform/android-sdk \
+            "build-tools;31.0.0" "platform-tools" "platforms;android-31"
+
+      # 步骤5：正式构建APK（使用国内镜像加速SDK/NDK下载）
+      - name: 5. 构建Android APK
         run: |
           buildozer android debug
         env:
-          # 配置国内镜像加速（解决下载超时问题）
+          # 配置国内清华镜像（解决SDK/NDK下载超时）
           ANDROID_SDK_URL: https://mirrors.tuna.tsinghua.edu.cn/android/sdk/
           ANDROID_NDK_URL: https://mirrors.tuna.tsinghua.edu.cn/android/ndk/
-          # 强制使用Python 3.10
-          PYTHONPATH: /opt/hostedtoolcache/Python/3.10.13/x64/lib/python3.10/site-packages
 
-      # 步骤5：上传APK产物（使用最新版上传插件）
-      - name: 5. 上传APK到GitHub
+      # 步骤6：上传APK产物（供下载）
+      - name: 6. 上传APK到GitHub
         uses: actions/upload-artifact@v4
         with:
           name: 屏幕调整工具APK
