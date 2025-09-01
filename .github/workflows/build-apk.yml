@@ -14,7 +14,6 @@ jobs:
       ANDROID_SDK_ROOT: "/home/runner/.buildozer/android/platform/android-sdk"
       ANDROID_NDK_VERSION: "25b"
       CMDLINE_VERSION: "9477386"
-      ANDROID_ACCEPT_SDK_LICENSES: "yes"
 
     steps:
       - name: 1. 拉取仓库代码
@@ -65,14 +64,14 @@ jobs:
         env:
           JAVA_HOME: "/usr/lib/jvm/temurin-11-jdk-amd64"
 
-      - name: 6. 下载并配置Android SDK（修复组件列表）
+      - name: 6. 下载并配置Android SDK（强制接受许可证）
         run: |
           # 1. 创建标准SDK目录结构
           mkdir -p $ANDROID_SDK_ROOT/cmdline-tools/latest
           sudo chmod -R 777 $ANDROID_SDK_ROOT
           echo "SDK根路径：$ANDROID_SDK_ROOT"
 
-          # 2. 下载cmdline-tools并解压到标准目录
+          # 2. 下载cmdline-tools并解压
           CMDLINE_ZIP="commandlinetools-linux-${CMDLINE_VERSION}_latest.zip"
           MIRRORS=(
             "https://mirrors.ustc.edu.cn/android/repository/"
@@ -96,33 +95,35 @@ jobs:
           wget --no-check-certificate -O $JAXB_LIBS_DIR/jaxb-api.jar "https://repo1.maven.org/maven2/javax/xml/bind/jaxb-api/2.3.1/jaxb-api-2.3.1.jar"
           wget --no-check-certificate -O $JAXB_LIBS_DIR/jaxb-core.jar "https://repo1.maven.org/maven2/com/sun/xml/bind/jaxb-core/2.3.0.1/jaxb-core-2.3.0.1.jar"
           wget --no-check-certificate -O $JAXB_LIBS_DIR/jaxb-impl.jar "https://repo1.maven.org/maven2/com/sun/xml/bind/jaxb-impl/2.3.0.1/jaxb-impl-2.3.0.1.jar"
-          echo "JAXB库列表："
-          ls -la $JAXB_LIBS_DIR/
 
-          # 4. 配置环境变量
-          export PATH="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$ANDROID_SDK_ROOT/platform-tools:$PATH"
-          export JAVA_HOME="/usr/lib/jvm/temurin-11-jdk-amd64"
-
-          # 5. 准备类路径
+          # 4. 准备类路径（SDK + JAXB）
           SDK_JAR="$ANDROID_SDK_ROOT/cmdline-tools/latest/lib/sdkmanager-classpath.jar"
           JAXB_JARS="$JAXB_LIBS_DIR/jaxb-api.jar:$JAXB_LIBS_DIR/jaxb-core.jar:$JAXB_LIBS_DIR/jaxb-impl.jar"
           FULL_CLASSPATH="$SDK_JAR:$JAXB_JARS"
+          export JAVA_HOME="/usr/lib/jvm/temurin-11-jdk-amd64"
 
-          # 6. 安装SDK组件（移除无效的'tools'包，修复包名错误）
-          echo "安装SDK组件（修正组件列表）..."
+          # 5. 关键步骤：强制接受所有SDK许可证（解决交互提示问题）
+          echo "=== 自动接受所有SDK许可证 ==="
+          yes | java -cp $FULL_CLASSPATH com.android.sdklib.tool.sdkmanager.SdkManagerCli \
+            --sdk_root=$ANDROID_SDK_ROOT \
+            --licenses
+          echo "=== 许可证接受完成 ==="
+
+          # 6. 安装SDK关键组件（此时许可证已接受，不会跳过）
+          echo "=== 安装SDK组件 ==="
           java -cp $FULL_CLASSPATH com.android.sdklib.tool.sdkmanager.SdkManagerCli \
             --sdk_root=$ANDROID_SDK_ROOT \
             "platform-tools" \
             "build-tools;31.0.0" \
-            "platforms;android-31"  # 移除'tools'包，该包在新版SDK中已被cmdline-tools替代
+            "platforms;android-31"
 
-          # 7. 验证安装结果
+          # 7. 验证安装结果（确保组件已正确安装）
           echo "=== SDK安装验证 ==="
           if [ -d "$ANDROID_SDK_ROOT/build-tools/31.0.0" ]; then
             echo "✅ Build Tools 31.0.0 安装成功"
           else
             echo "❌ Build Tools 31.0.0 未安装"
-            ls -la $ANDROID_SDK_ROOT/build-tools/
+            ls -la $ANDROID_SDK_ROOT/build-tools/ 2>/dev/null || echo "build-tools目录不存在"
             exit 1
           fi
           if [ -f "$ANDROID_SDK_ROOT/build-tools/31.0.0/aidl" ]; then
@@ -137,6 +138,12 @@ jobs:
             echo "❌ platform-tools 未安装"
             exit 1
           fi
+          if [ -d "$ANDROID_SDK_ROOT/platforms/android-31" ]; then
+            echo "✅ platforms;android-31 安装成功"
+          else
+            echo "❌ platforms;android-31 未安装"
+            exit 1
+          fi
 
       - name: 7. 构建APK（详细日志）
         run: |
@@ -144,6 +151,7 @@ jobs:
           export PATH="$JAVA_HOME/bin:$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$ANDROID_SDK_ROOT/platform-tools:$PATH"
           export ANDROID_NDK_URL="https://mirrors.tuna.tsinghua.edu.cn/android/ndk/android-ndk-r${ANDROID_NDK_VERSION}-linux.zip"
           
+          # 显式指定SDK/NDK路径，确保Buildozer识别
           buildozer android debug --log-level 2 \
             --android-sdk "$ANDROID_SDK_ROOT" \
             --android-ndk "$ANDROID_SDK_ROOT/../android-ndk-r${ANDROID_NDK_VERSION}"
