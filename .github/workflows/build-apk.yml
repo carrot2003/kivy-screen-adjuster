@@ -1,0 +1,45 @@
+# 工作流名称：描述这个Action的作用
+name: 自动构建Android APK
+
+# 触发条件：当代码推送到main分支时，自动执行打包（和你本地分支名一致）
+on:
+  push:
+    branches: [ main ]
+
+# 定义打包任务（Job）
+jobs:
+  build-apk:
+    # 运行环境：选择Ubuntu最新版（Linux环境对Buildozer兼容性最好）
+    runs-on: ubuntu-latest
+
+    # 步骤：一步步执行打包操作
+    steps:
+      # 步骤1：拉取GitHub仓库的代码到打包服务器
+      - name: 1. 拉取仓库代码
+        uses: actions/checkout@v4
+
+      # 步骤2：配置Python环境（指定3.10版本，兼容Kivy 2.3.1和Buildozer）
+      - name: 2. 安装Python 3.10
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+          cache: 'pip'  # 缓存Python依赖，加速后续构建
+
+      # 步骤3：安装Buildozer和项目依赖
+      - name: 3. 安装Buildozer与依赖库
+        run: |
+          python -m pip install --upgrade pip
+          pip install buildozer  # 安装Buildozer
+          pip install pillow     # 安装图片处理库（加载example.jpg需要）
+
+      # 步骤4：执行打包命令（生成debug版APK，Buildozer会自动下载SDK/NDK）
+      - name: 4. 构建Android APK
+        run: |
+          buildozer android debug
+
+      # 步骤5：将生成的APK上传为“产物”（Artifacts），方便下载
+      - name: 5. 上传APK到GitHub
+        uses: actions/upload-artifact@v3
+        with:
+          name: 屏幕调整工具APK  # 下载时显示的压缩包名称（可自定义）
+          path: bin/*.apk        # APK的生成路径（Buildozer默认在bin目录下）
