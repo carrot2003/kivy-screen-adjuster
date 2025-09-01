@@ -26,60 +26,60 @@ jobs:
             zlib1g-dev \
             libncurses5-dev \
             git \
-            wget  # 新增wget用于手动下载SDK工具
+            wget
 
       - name: 安装Buildozer和依赖
         run: |
           python -m pip install --upgrade pip
           pip install buildozer cython pillow
 
-      - name: 手动配置Android SDK（确保路径正确）
+      - name: 手动配置Android SDK（修复cmdline-tools下载）
         run: |
-          # 1. 明确Buildozer使用的SDK路径（关键：必须与Buildozer预期路径完全一致）
+          # 明确SDK路径
           export ANDROID_SDK_ROOT="/home/runner/.buildozer/android/platform/android-sdk"
-          
-          # 2. 手动创建SDK目录（避免Buildozer初始化失败导致目录缺失）
           mkdir -p $ANDROID_SDK_ROOT
-          sudo chmod -R 777 $ANDROID_SDK_ROOT  # 赋予完全权限，避免安装时权限不足
+          sudo chmod -R 777 $ANDROID_SDK_ROOT
           
-          # 3. 下载并安装最新的cmdline-tools（现代SDK管理工具，替代旧版tools）
-          # 从清华镜像下载cmdline-tools（版本11.0，稳定版）
-          wget https://mirrors.tuna.tsinghua.edu.cn/android/repository/commandlinetools-linux-9477386_latest.zip -O cmdline-tools.zip
+          # 更换为镜像中存在的cmdline-tools版本（10406996是稳定版）
+          CMDLINE_VERSION="10406996"
+          CMDLINE_ZIP="commandlinetools-linux-${CMDLINE_VERSION}_latest.zip"
+          
+          # 先尝试清华镜像，失败则用官方源
+          if ! wget "https://mirrors.tuna.tsinghua.edu.cn/android/repository/$CMDLINE_ZIP" -O cmdline-tools.zip; then
+            echo "清华镜像下载失败，尝试官方源..."
+            wget "https://dl.google.com/android/repository/$CMDLINE_ZIP" -O cmdline-tools.zip
+          fi
+          
+          # 解压并整理目录结构
           unzip -q cmdline-tools.zip -d $ANDROID_SDK_ROOT
-          # 重命名为cmdline-tools/latest（SDK要求的标准结构）
           mv $ANDROID_SDK_ROOT/cmdline-tools $ANDROID_SDK_ROOT/cmdline-tools-tmp
           mkdir -p $ANDROID_SDK_ROOT/cmdline-tools/latest
           mv $ANDROID_SDK_ROOT/cmdline-tools-tmp/* $ANDROID_SDK_ROOT/cmdline-tools/latest/
           
-          # 4. 配置SDK工具路径到环境变量
+          # 配置环境变量
           export PATH="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$PATH"
           
-          # 5. 强制接受所有许可证（使用新版sdkmanager）
+          # 接受许可证并安装组件
           yes | sdkmanager --licenses
-          
-          # 6. 安装指定版本的Build Tools（31.0.0，稳定版）和必要组件
           sdkmanager \
             "build-tools;31.0.0" \
             "platform-tools" \
             "platforms;android-31" \
-            "tools"  # 兼容旧版工具
+            "tools"
           
-          # 7. 验证安装结果（关键：检查build-tools目录是否存在）
-          echo "检查Build Tools安装目录："
+          # 验证安装
+          echo "Build Tools目录内容："
           ls -la $ANDROID_SDK_ROOT/build-tools/
-          echo "检查aidl是否存在："
-          ls -la $ANDROID_SDK_ROOT/build-tools/31.0.0/aidl || echo "aidl仍未找到！"
+          echo "aidl是否存在："
+          ls -la $ANDROID_SDK_ROOT/build-tools/31.0.0/aidl || echo "警告：aidl未找到"
 
-      - name: 构建APK（指定SDK路径）
+      - name: 构建APK
         run: |
           export ANDROID_SDK_ROOT="/home/runner/.buildozer/android/platform/android-sdk"
           export PATH="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$PATH"
-          # 强制Buildozer使用我们指定的SDK路径
           buildozer android debug
         env:
           ANDROID_SDK_ROOT: "/home/runner/.buildozer/android/platform/android-sdk"
-          ANDROID_SDK_URL: https://mirrors.tuna.tsinghua.edu.cn/android/sdk/
-          ANDROID_NDK_URL: https://mirrors.tuna.tsinghua.edu.cn/android/ndk/
 
       - name: 上传APK产物
         uses: actions/upload-artifact@v4
