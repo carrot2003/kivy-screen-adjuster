@@ -14,7 +14,7 @@ jobs:
       ANDROID_SDK_ROOT: "/home/runner/.buildozer/android/platform/android-sdk"
       ANDROID_NDK_VERSION: "25b"
       CMDLINE_VERSION: "9477386"
-      ANDROID_ACCEPT_SDK_LICENSES: "yes"  # 自动接受许可证（官方推荐方式）
+      ANDROID_ACCEPT_SDK_LICENSES: "yes"
 
     steps:
       - name: 1. 拉取仓库代码
@@ -65,14 +65,14 @@ jobs:
         env:
           JAVA_HOME: "/usr/lib/jvm/temurin-11-jdk-amd64"
 
-      - name: 6. 下载并配置Android SDK（修复路径+许可证）
+      - name: 6. 下载并配置Android SDK（修复jar名称）
         run: |
-          # 1. 创建目录并授权
+          # 创建目录并授权
           mkdir -p $ANDROID_SDK_ROOT
           sudo chmod -R 777 $ANDROID_SDK_ROOT
           echo "SDK路径：$ANDROID_SDK_ROOT"
 
-          # 2. 下载cmdline-tools（兼容Java 11）
+          # 下载cmdline-tools
           CMDLINE_ZIP="commandlinetools-linux-${CMDLINE_VERSION}_latest.zip"
           MIRRORS=(
             "https://mirrors.ustc.edu.cn/android/repository/"
@@ -87,33 +87,33 @@ jobs:
             fi
           done
 
-          # 3. 解压cmdline-tools并移动到tools目录（关键：旧版依赖tools目录结构）
+          # 解压并修正目录结构
           unzip -q cmdline-tools.zip -d $ANDROID_SDK_ROOT
-          mv $ANDROID_SDK_ROOT/cmdline-tools $ANDROID_SDK_ROOT/tools  # 直接重命名为tools，避免路径混乱
-          rm -f cmdline-tools.zip  # 清理压缩包
+          mv $ANDROID_SDK_ROOT/cmdline-tools $ANDROID_SDK_ROOT/tools
+          rm -f cmdline-tools.zip
 
-          # 4. 配置环境变量（确保tools/bin在PATH中）
+          # 配置环境变量
           export PATH="$ANDROID_SDK_ROOT/tools/bin:$ANDROID_SDK_ROOT/platform-tools:$PATH"
           export JAVA_HOME="/usr/lib/jvm/temurin-11-jdk-amd64"
 
-          # 5. 验证sdkmanager.jar是否存在（避免路径错误）
-          SDK_JAR_PATH="$ANDROID_SDK_ROOT/tools/lib/sdkmanager.jar"
+          # 关键修复：使用实际存在的sdkmanager-classpath.jar
+          SDK_JAR_PATH="$ANDROID_SDK_ROOT/tools/lib/sdkmanager-classpath.jar"
           if [ ! -f "$SDK_JAR_PATH" ]; then
-            echo "错误：未找到sdkmanager.jar，路径：$SDK_JAR_PATH"
-            ls -la $ANDROID_SDK_ROOT/tools/lib/  # 显示目录内容，帮助排查
+            echo "错误：未找到$sdkmanager-classpath.jar，路径：$SDK_JAR_PATH"
+            ls -la $ANDROID_SDK_ROOT/tools/lib/
             exit 1
           fi
-          echo "找到sdkmanager.jar：$SDK_JAR_PATH"
+          echo "找到sdkmanager-classpath.jar：$SDK_JAR_PATH"
 
-          # 6. 安装SDK组件（显式启用JAXB模块，使用正确的jar路径）
-          echo "安装SDK组件：platform-tools、build-tools、platforms"
+          # 安装SDK组件（使用正确的jar包）
+          echo "安装SDK组件..."
           java --add-modules java.xml.bind -jar "$SDK_JAR_PATH" \
             "platform-tools" \
             "build-tools;31.0.0" \
             "platforms;android-31" \
-            "tools"  # 确保tools组件完整
+            "tools"
 
-          # 7. 验证安装结果（确认Build Tools和aidl存在）
+          # 验证安装结果
           echo "=== SDK安装验证 ==="
           if [ -d "$ANDROID_SDK_ROOT/build-tools/31.0.0" ]; then
             echo "Build Tools 31.0.0 安装成功"
@@ -123,7 +123,7 @@ jobs:
             exit 1
           fi
           if [ -f "$ANDROID_SDK_ROOT/build-tools/31.0.0/aidl" ]; then
-            echo "aidl工具找到：$ANDROID_SDK_ROOT/build-tools/31.0.0/aidl"
+            echo "aidl工具找到"
           else
             echo "错误：aidl工具缺失"
             exit 1
@@ -135,25 +135,9 @@ jobs:
           export PATH="$JAVA_HOME/bin:$ANDROID_SDK_ROOT/tools/bin:$ANDROID_SDK_ROOT/platform-tools:$PATH"
           export ANDROID_NDK_URL="https://mirrors.tuna.tsinghua.edu.cn/android/ndk/android-ndk-r${ANDROID_NDK_VERSION}-linux.zip"
           
-          echo "开始构建APK..."
-          # 显式指定SDK路径给Buildozer，避免查找错误
           buildozer android debug --log-level 2 \
             --android-sdk "$ANDROID_SDK_ROOT" \
             --android-ndk "$ANDROID_SDK_ROOT/../android-ndk-r${ANDROID_NDK_VERSION}"
-
-          # 验证APK生成
-          echo "=== APK生成验证 ==="
-          if [ -d "bin" ]; then
-            ls -la bin/
-            if [ -f "bin/*.apk" ]; then
-              echo "APK生成成功！"
-            else
-              echo "警告：bin目录存在，但未找到APK文件"
-            fi
-          else
-            echo "错误：bin目录缺失"
-            ls -la .  # 显示根目录内容，排查问题
-          fi
 
       - name: 8. 上传产物（含日志）
         uses: actions/upload-artifact@v4
