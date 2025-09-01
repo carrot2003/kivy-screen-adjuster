@@ -94,16 +94,17 @@ jobs:
           echo "自动接受许可证..."
           yes | sdkmanager --licenses || true
 
-          echo "安装Build Tools组件..."
-          sdkmanager \
+          echo "安装Build Tools组件（显式启用JAXB模块）..."
+          # 关键修复：通过Java命令显式加载JAXB模块，解决Java 11兼容性问题
+          java --add-modules java.xml.bind -jar $ANDROID_SDK_ROOT/cmdline-tools/latest/lib/sdkmanager.jar \
             "build-tools;31.0.0" \
             "platform-tools" \
             "platforms;android-31" \
             "tools"
 
           echo "=== SDK验证 ==="
-          ls -la $ANDROID_SDK_ROOT/build-tools/ || echo "Build Tools缺失"
-          ls -la $ANDROID_SDK_ROOT/build-tools/31.0.0/aidl || echo "aidl缺失"
+          ls -la $ANDROID_SDK_ROOT/build-tools/ || echo "Build Tools目录缺失"
+          ls -la $ANDROID_SDK_ROOT/build-tools/31.0.0/aidl || echo "aidl工具缺失"
 
       - name: 7. 构建APK（超详细日志，定位错误）
         run: |
@@ -112,7 +113,6 @@ jobs:
           export ANDROID_NDK_URL="https://mirrors.tuna.tsinghua.edu.cn/android/ndk/android-ndk-r${ANDROID_NDK_VERSION}-linux.zip"
           
           echo "开始构建APK（详细日志模式）..."
-          # 增加--log-level 2，输出最详细的构建日志
           buildozer android debug --log-level 2
           ls -la bin/ || echo "bin目录缺失"
           ls -la bin/*.apk || echo "APK未生成"
@@ -123,6 +123,6 @@ jobs:
           name: 屏幕调整工具APK（含超详细日志）
           path: |
             bin/*.apk
-            .buildozer/logs/*.log  # 包含--log-level 2的详细日志
+            .buildozer/logs/*.log
           retention-days: 14
         if: always()
