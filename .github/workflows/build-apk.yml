@@ -65,14 +65,14 @@ jobs:
         env:
           JAVA_HOME: "/usr/lib/jvm/temurin-11-jdk-amd64"
 
-      - name: 6. 下载并配置Android SDK（修复JAXB缺失）
+      - name: 6. 下载并配置Android SDK（修复目录结构+SDK root）
         run: |
-          # 1. 创建SDK目录并授权
-          mkdir -p $ANDROID_SDK_ROOT
+          # 1. 创建标准SDK目录结构（关键：符合cmdline-tools规范）
+          mkdir -p $ANDROID_SDK_ROOT/cmdline-tools/latest  # 必须是这个路径
           sudo chmod -R 777 $ANDROID_SDK_ROOT
-          echo "SDK路径：$ANDROID_SDK_ROOT"
+          echo "SDK根路径：$ANDROID_SDK_ROOT"
 
-          # 2. 下载cmdline-tools（兼容Java 11）
+          # 2. 下载cmdline-tools并解压到标准目录
           CMDLINE_ZIP="commandlinetools-linux-${CMDLINE_VERSION}_latest.zip"
           MIRRORS=(
             "https://mirrors.ustc.edu.cn/android/repository/"
@@ -86,68 +86,77 @@ jobs:
               break
             fi
           done
-          unzip -q cmdline-tools.zip -d $ANDROID_SDK_ROOT
-          mv $ANDROID_SDK_ROOT/cmdline-tools $ANDROID_SDK_ROOT/tools
-          rm -f cmdline-tools.zip
+          # 解压到cmdline-tools/latest（标准路径）
+          unzip -q cmdline-tools.zip -d $ANDROID_SDK_ROOT/cmdline-tools/tmp
+          mv $ANDROID_SDK_ROOT/cmdline-tools/tmp/*/* $ANDROID_SDK_ROOT/cmdline-tools/latest/
+          rm -rf cmdline-tools.zip $ANDROID_SDK_ROOT/cmdline-tools/tmp
 
-          # 3. 关键修复：下载JAXB兼容库（Java 11缺失的模块）
-          # 引用GlassFish的JAXB实现，兼容旧版SDK工具
-          JAXB_LIBS_DIR="$ANDROID_SDK_ROOT/tools/lib/jaxb"
+          # 3. 下载JAXB兼容库（Java 11缺失模块）
+          JAXB_LIBS_DIR="$ANDROID_SDK_ROOT/cmdline-tools/latest/lib/jaxb"
           mkdir -p $JAXB_LIBS_DIR
-          # 下载jaxb-api（接口）、jaxb-core（核心）、jaxb-impl（实现）
           wget --no-check-certificate -O $JAXB_LIBS_DIR/jaxb-api.jar "https://repo1.maven.org/maven2/javax/xml/bind/jaxb-api/2.3.1/jaxb-api-2.3.1.jar"
           wget --no-check-certificate -O $JAXB_LIBS_DIR/jaxb-core.jar "https://repo1.maven.org/maven2/com/sun/xml/bind/jaxb-core/2.3.0.1/jaxb-core-2.3.0.1.jar"
           wget --no-check-certificate -O $JAXB_LIBS_DIR/jaxb-impl.jar "https://repo1.maven.org/maven2/com/sun/xml/bind/jaxb-impl/2.3.0.1/jaxb-impl-2.3.0.1.jar"
-          # 验证JAXB库下载成功
-          ls -la $JAXB_LIBS_DIR/ || echo "JAXB库下载失败"
+          echo "JAXB库列表："
+          ls -la $JAXB_LIBS_DIR/
 
-          # 4. 配置环境变量
-          export PATH="$ANDROID_SDK_ROOT/tools/bin:$ANDROID_SDK_ROOT/platform-tools:$PATH"
+          # 4. 配置环境变量（包含标准cmdline-tools路径）
+          export PATH="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$ANDROID_SDK_ROOT/platform-tools:$PATH"
           export JAVA_HOME="/usr/lib/jvm/temurin-11-jdk-amd64"
 
-          # 5. 准备SDK管理器的类路径（包含JAXB库）
-          SDK_JAR="$ANDROID_SDK_ROOT/tools/lib/sdkmanager-classpath.jar"
+          # 5. 准备类路径（SDK jar + JAXB库）
+          SDK_JAR="$ANDROID_SDK_ROOT/cmdline-tools/latest/lib/sdkmanager-classpath.jar"
           JAXB_JARS="$JAXB_LIBS_DIR/jaxb-api.jar:$JAXB_LIBS_DIR/jaxb-core.jar:$JAXB_LIBS_DIR/jaxb-impl.jar"
-          # 合并类路径（JAXB库 + SDK管理器jar）
           FULL_CLASSPATH="$SDK_JAR:$JAXB_JARS"
 
-          # 6. 安装SDK组件（通过-classpath引入JAXB库，解决模块缺失）
-          echo "安装SDK组件（含JAXB兼容库）..."
+          # 6. 安装SDK组件（显式指定--sdk_root，解决路径识别问题）
+          echo "安装SDK组件（指定SDK root）..."
           java -cp $FULL_CLASSPATH com.android.sdklib.tool.sdkmanager.SdkManagerCli \
+            --sdk_root=$ANDROID_SDK_ROOT \  # 关键参数：明确SDK根目录
             "platform-tools" \
             "build-tools;31.0.0" \
             "platforms;android-31" \
-            "tools"
+            "tools"  # 安装旧版tools，兼容Buildozer
 
-          # 7. 验证安装结果
+          # 7. 验证安装结果（确保关键文件存在）
           echo "=== SDK安装验证 ==="
           if [ -d "$ANDROID_SDK_ROOT/build-tools/31.0.0" ]; then
-            echo "Build Tools 31.0.0 安装成功"
+            echo "✅ Build Tools 31.0.0 安装成功"
           else
-            echo "错误：Build Tools 31.0.0 未安装"
+            echo "❌ Build Tools 31.0.0 未安装"
             ls -la $ANDROID_SDK_ROOT/build-tools/
             exit 1
           fi
           if [ -f "$ANDROID_SDK_ROOT/build-tools/31.0.0/aidl" ]; then
-            echo "aidl工具找到：$ANDROID_SDK_ROOT/build-tools/31.0.0/aidl"
+            echo "✅ aidl工具找到：$ANDROID_SDK_ROOT/build-tools/31.0.0/aidl"
           else
-            echo "错误：aidl工具缺失"
+            echo "❌ aidl工具缺失"
             exit 1
           fi
 
       - name: 7. 构建APK（详细日志）
         run: |
           export JAVA_HOME="/usr/lib/jvm/temurin-11-jdk-amd64"
-          export PATH="$JAVA_HOME/bin:$ANDROID_SDK_ROOT/tools/bin:$ANDROID_SDK_ROOT/platform-tools:$PATH"
+          export PATH="$JAVA_HOME/bin:$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$ANDROID_SDK_ROOT/platform-tools:$PATH"
           export ANDROID_NDK_URL="https://mirrors.tuna.tsinghua.edu.cn/android/ndk/android-ndk-r${ANDROID_NDK_VERSION}-linux.zip"
           
-          # 显式指定SDK/NDK路径，避免查找错误
+          # 显式指定SDK/NDK路径，避免Buildozer查找错误
           buildozer android debug --log-level 2 \
             --android-sdk "$ANDROID_SDK_ROOT" \
             --android-ndk "$ANDROID_SDK_ROOT/../android-ndk-r${ANDROID_NDK_VERSION}"
 
-          # 验证APK目录
-          ls -la bin/ || echo "bin目录缺失"
+          # 验证APK生成目录
+          echo "=== APK生成验证 ==="
+          if [ -d "bin" ]; then
+            ls -la bin/
+            if [ -n "$(ls -A bin/*.apk 2>/dev/null)" ]; then
+              echo "✅ APK生成成功！"
+            else
+              echo "⚠️ bin目录存在，但未找到APK文件"
+            fi
+          else
+            echo "❌ bin目录缺失"
+          fi
 
       - name: 8. 上传产物（含日志）
         uses: actions/upload-artifact@v4
