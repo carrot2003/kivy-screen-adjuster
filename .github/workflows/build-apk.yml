@@ -24,6 +24,7 @@ jobs:
         with:
           python-version: '3.10'
           cache: 'pip'  # 缓存Python依赖，加速后续构建
+          cache-dependency-path: ''  # 新增：禁用依赖配置文件强制检查
 
       # 步骤3：安装Buildozer和项目依赖
       - name: 3. 安装Buildozer与依赖库
